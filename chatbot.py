@@ -1,97 +1,169 @@
 
 import pandas as pd
+import re
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 from train_model import predict_category
+
 
 # Load dataset
 data = pd.read_csv("data/pnec_dataset.csv")
 
 
-# Words that are not useful for searching
-stop_words = [
-    "what", "is", "the", "a", "an",
-    "can", "i", "does", "do", "how",
-    "to", "of", "for", "and", "me",
-    "tell", "please", "about", "at", "pnec"
-]
+# Clean text
+def clean_text(text):
+    text = str(text).lower()
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
-# Clean the question
-def clean_words(sentence):
+# Prepare questions
+questions = data["question"].fillna("").astype(str).tolist()
+cleaned_questions = [clean_text(q) for q in questions]
 
-    sentence = sentence.lower()
 
-    for mark in "?,.!":
-        sentence = sentence.replace(mark, "")
+# Convert questions into TF-IDF vectors
+vectorizer = TfidfVectorizer(
+    ngram_range=(1, 2),
+    stop_words="english"
+)
 
-    words = sentence.split()
+question_vectors = vectorizer.fit_transform(cleaned_questions)
 
-    useful_words = []
 
-    for word in words:
-        if word not in stop_words:
-            useful_words.append(word)
+# Identify the category of a question
+def get_category(question):
 
-    return useful_words
+    q = clean_text(question)
+
+    # Computer Science
+    if any(word in q for word in [
+        "computer science", "cs department", "bscs",
+        "programming", "data science", "cyber security"
+    ]):
+        return ["Computer Science"]
+
+    # Departments
+    if any(word in q for word in [
+        "department", "departments", "hod", "faculty"
+    ]):
+        return ["Departments"]
+
+    # Library
+    if any(word in q for word in [
+        "library", "book", "books", "printing"
+    ]):
+        return ["Library"]
+
+    # Hostel
+    if any(word in q for word in [
+        "hostel", "accommodation", "dormitory"
+    ]):
+        return ["Student Life", "Admissions"]
+
+    # Contact
+    if any(word in q for word in [
+        "phone", "number", "email", "contact", "registrar"
+    ]):
+        return ["Contact"]
+
+    # Admissions
+    if any(word in q for word in [
+        "admission", "apply", "eligibility", "joining",
+        "scholarship", "financial aid", "fee", "fees",
+        "tuition", "net", "merit", "entry test",
+        "matric", "intermediate", "percentage",
+        "sat", "act", "nfaaf", "loan", "instalment",
+        "installment"
+]):
+        return ["Admissions"]
+
+    # Transport
+    if any(word in q for word in [
+        "transport", "bus", "route"
+    ]):
+        return ["Transport"]
+
+    # General PNEC questions
+    if any(phrase in q for phrase in [
+        "what is pnec",
+        "tell me about pnec",
+        "about pnec",
+        "what does pnec stand for",
+        "where is pnec located",
+        "when was pnec established"
+    ]):
+        return ["General"]
+
+    return []
 
 
 # Find the best answer
 def find_answer(user_question):
 
-    # Step 1: Check exact question match
-    entered_question = user_question.lower().strip()
+    cleaned_input = clean_text(user_question)
 
-    for mark in "?,.!":
-        entered_question = entered_question.replace(mark, "")
+    if not cleaned_input:
+        return "Please enter a valid question."
 
-    for index, row in data.iterrows():
+    # Reject unsupported facility questions
+    if any(word in cleaned_input for word in [
+        "swimming pool", "pool"
+    ]):
+        return "Sorry, I do not have verified information about this facility at PNEC."
 
-        stored_question = str(row["question"]).lower().strip()
+    # Exact question matching
+    for index, question in enumerate(cleaned_questions):
 
-        for mark in "?,.!":
-            stored_question = stored_question.replace(mark, "")
+        if cleaned_input == question:
+            return data.iloc[index]["answer"]
 
-        if entered_question == stored_question:
-            return row["answer"]
+    # Predict category using AI model
+    try:
+        print("Predicted Category:", predict_category(user_question))
+    except Exception:
+        pass
 
-    # Step 2: Predict category using AI
-    category = predict_category(user_question)
+    # Identify relevant categories
+    categories = get_category(user_question)
 
-    print("Predicted Category:", category)
-
-    # Step 3: Clean user's question
-    user_words = clean_words(user_question)
-
-    if len(user_words) == 0:
+    if not categories:
         return "Sorry, I could not find an answer to your question."
 
-    # Step 4: Search the complete dataset
-    best_score = 0
-    best_answer = None
+    # Safe response for hostel availability
+    if "hostel" in cleaned_input and any(word in cleaned_input for word in [
+        "stay", "live", "available", "availability", "accommodation"
+    ]):
+        return "I do not have verified information about current hostel availability. Please contact PNEC Student Affairs."
 
-    for index, row in data.iterrows():
+    # Select questions from relevant categories only
+    candidate_indices = data[
+        data["category"].isin(categories)
+    ].index.tolist()
 
-        stored_words = clean_words(str(row["question"]))
+    if not candidate_indices:
+        return "Sorry, I could not find an answer to your question."
 
-        matching_words = 0
+    # Calculate similarity
+    user_vector = vectorizer.transform([cleaned_input])
 
-        for word in user_words:
-            if word in stored_words:
-                matching_words += 1
+    similarity_scores = cosine_similarity(
+        user_vector,
+        question_vectors[candidate_indices]
+    )[0]
 
-        # Calculate Jaccard similarity
-        total_words = len(set(user_words + stored_words))
+    best_position = similarity_scores.argmax()
+    best_index = candidate_indices[best_position]
+    best_score = similarity_scores[best_position]
 
-        if total_words > 0:
-            score = matching_words / total_words
-        else:
-            score = 0
+    print("Matched Question:", data.iloc[best_index]["question"])
+    print("Similarity Score:", round(best_score, 3))
+    print("Matched Category:", data.iloc[best_index]["category"])
 
-        if score > best_score:
-            best_score = score
-            best_answer = row
-
-    # Step 5: Return answer only if match is good enough
-    if best_answer is not None and best_score >= 0.30:
-        return best_answer["answer"]
+    # Return answer only if similarity is sufficient
+    if best_score >= 0.30:
+        return data.iloc[best_index]["answer"]
 
     return "Sorry, I could not find an answer to your question."
