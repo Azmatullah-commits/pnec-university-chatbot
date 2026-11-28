@@ -24,7 +24,7 @@ questions = data["question"].fillna("").astype(str).tolist()
 cleaned_questions = [clean_text(q) for q in questions]
 
 
-# Convert questions into TF-IDF vectors
+# TF-IDF vectorization
 vectorizer = TfidfVectorizer(
     ngram_range=(1, 2),
     stop_words="english"
@@ -33,58 +33,75 @@ vectorizer = TfidfVectorizer(
 question_vectors = vectorizer.fit_transform(cleaned_questions)
 
 
-# Identify the category of a question
+# Identify relevant category
 def get_category(question):
 
     q = clean_text(question)
 
-    # Computer Science
+    # Sports and student activities
     if any(word in q for word in [
-        "computer science", "cs department", "bscs",
-        "programming", "data science", "cyber security"
+        "sport", "sports", "gym", "gymnasium",
+        "badminton", "cricket", "tennis", "squash",
+        "basketball", "volleyball", "futsal",
+        "snooker", "table tennis", "football",
+        "competition", "society", "societies",
+        "club", "clubs", "faculty advisor",
+        "counselling", "counseling"
     ]):
-        return ["Computer Science"]
-
-    # Departments
-    if any(word in q for word in [
-        "department", "departments", "hod", "faculty"
-    ]):
-        return ["Departments"]
-
-    # Library
-    if any(word in q for word in [
-        "library", "book", "books", "printing"
-    ]):
-        return ["Library"]
+        return ["Student Life"]
 
     # Hostel
     if any(word in q for word in [
-        "hostel", "accommodation", "dormitory"
+        "hostel", "accommodation", "dormitory",
+        "room allocation"
     ]):
         return ["Student Life", "Admissions"]
 
     # Contact
     if any(word in q for word in [
-        "phone", "number", "email", "contact", "registrar"
+        "phone", "number", "email", "contact",
+        "registrar", "address", "telephone"
     ]):
         return ["Contact"]
 
-    # Admissions
+    # Library
+    if any(word in q for word in [
+        "library", "book", "books", "printing",
+        "periodical", "thesis", "theses"
+    ]):
+        return ["Library"]
+
+    # Transport
+    if any(word in q for word in [
+        "transport", "bus", "route", "pick up",
+        "drop off"
+    ]):
+        return ["Transport"]
+
+    # Computer Science
+    if any(word in q for word in [
+        "computer science", "cs department", "bscs",
+        "programming", "data science", "cyber security",
+        "artificial intelligence"
+    ]):
+        return ["Computer Science"]
+
+    # Departments
+    if any(word in q for word in [
+        "department", "departments", "hod"
+    ]):
+        return ["Departments"]
+
+    # Admissions and financial aid
     if any(word in q for word in [
         "admission", "apply", "eligibility", "joining",
         "scholarship", "financial aid", "fee", "fees",
         "tuition", "net", "merit", "entry test",
         "matric", "intermediate", "percentage",
-        "sat", "act", "nfaaf", "loan", "instalment",
-        "installment"
-]):
-        return ["Admissions"]
-
-    # Transport
-    if any(word in q for word in [
-        "transport", "bus", "route"
+        "sat", "act", "nfaaf", "loan",
+        "instalment", "installment"
     ]):
-        return ["Transport"]
+        return ["Admissions"]
 
     # General PNEC questions
     if any(phrase in q for phrase in [
@@ -100,7 +117,7 @@ def get_category(question):
     return []
 
 
-# Find the best answer
+# Find answer
 def find_answer(user_question):
 
     cleaned_input = clean_text(user_question)
@@ -108,7 +125,7 @@ def find_answer(user_question):
     if not cleaned_input:
         return "Please enter a valid question."
 
-    # Reject unsupported facility questions
+    # Unknown facility protection
     if any(word in cleaned_input for word in [
         "swimming pool", "pool"
     ]):
@@ -120,28 +137,35 @@ def find_answer(user_question):
         if cleaned_input == question:
             return data.iloc[index]["answer"]
 
-    # Predict category using AI model
-    try:
-        print("Predicted Category:", predict_category(user_question))
-    except Exception:
-        pass
-
-    # Identify relevant categories
+    # Detect category
     categories = get_category(user_question)
 
     if not categories:
         return "Sorry, I could not find an answer to your question."
 
-    # Safe response for hostel availability
+    # Hostel availability protection
     if "hostel" in cleaned_input and any(word in cleaned_input for word in [
-        "stay", "live", "available", "availability", "accommodation"
+        "stay", "live", "available", "availability",
+        "accommodation", "room allocation"
     ]):
-        return "I do not have verified information about current hostel availability. Please contact PNEC Student Affairs."
+        return (
+            "I cannot confirm current hostel availability "
+            "or guarantee room allocation. Please contact "
+            "PNEC administration for current information."
+        )
 
-    # Select questions from relevant categories only
+    # Find candidate records
     candidate_indices = data[
         data["category"].isin(categories)
     ].index.tolist()
+
+    # For general admission questions, exclude hostel application records
+    if "Admissions" in categories and "hostel" not in cleaned_input:
+
+        candidate_indices = [
+            i for i in candidate_indices
+            if "hostel" not in cleaned_questions[i]
+        ]
 
     if not candidate_indices:
         return "Sorry, I could not find an answer to your question."
@@ -158,12 +182,13 @@ def find_answer(user_question):
     best_index = candidate_indices[best_position]
     best_score = similarity_scores[best_position]
 
+    print("Predicted Category:", categories)
     print("Matched Question:", data.iloc[best_index]["question"])
     print("Similarity Score:", round(best_score, 3))
     print("Matched Category:", data.iloc[best_index]["category"])
 
-    # Return answer only if similarity is sufficient
-    if best_score >= 0.30:
+    # Similarity threshold
+    if best_score >= 0.35:
         return data.iloc[best_index]["answer"]
 
     return "Sorry, I could not find an answer to your question."
